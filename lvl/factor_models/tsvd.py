@@ -1,30 +1,27 @@
 """
-Nonnegative matrix factorization routines.
-
-References
-----------
-Gillis, N. (2014). The why and how of nonnegative matrix factorization.
-    Regularization, Optimization, Kernels, and Support Vector Machines,
-    12(257).
+Truncated Singular Value Decomposition.
 """
 import numpy as np
 import numba
+from sklearn.decomposition import TruncatedSVD as _TruncatedSVD
 
 from ..exceptions import raise_not_fitted, raise_no_method, raise_no_init
 from ..utils import get_random_state
 
 
-class NMF:
+class TSVD:
     """
-    Nonnegative Matrix Factorization (NMF) class.
+    Specifies Truncated SVD model.
     """
 
     def __init__(
-            self, n_components, method="hals", init="rand",
-            tol=1e-5, maxiter=100, seed=None):
+            self, n_components, method="als", init="rand_orth",
+            orthogonalize=True, tol=1e-5, maxiter=100,
+            seed=None):
 
-        # Model hyperparameters.
+        # Model options.
         self.n_components = n_components
+        self.orthogonalize = orthogonalize
 
         # Optimization parameters.
         self.tol = tol
@@ -35,20 +32,20 @@ class NMF:
         self._factors = None
 
         # Check that optimization method is recognized.
-        METHODS = ("hals",)
+        METHODS = ("als",)
         if method not in METHODS:
-            raise_no_method("NMF", method, METHODS)
+            raise_no_method("TSVD", method, METHODS)
         else:
             self.method = method
 
         # Check that initialization method is recognized.
-        INITS = ("rand",)
+        INITS = ("rand_orth",)
         if init not in INITS:
-            raise_no_init("NMF", init, INITS)
+            raise_no_init("TSVD", init, INITS)
         else:
             self.init = init
 
-    def fit(self, X, mask=None):
+    def fit(self, X, mask=None, overwrite_loss=True):
         """
         Fits model parameters.
 
@@ -60,13 +57,41 @@ class NMF:
             Binary array specifying observed data points
             (where mask == 1) and unobserved data points
             (where mask == 0). Has shape (m, n).
+        overwrite_loss : bool
+            If True, self.loss_hist is overwritten.
         """
-        W, H, self.loss_hist = _fit_nmf(
-            X, self.n_components, mask,
-            self.method, self.init, self.tol,
-            self.maxiter, self.seed
-        )
-        self._factors = W, H
+
+        # Use sci-kit-learn backend.
+        if mask is None:
+            svd = _TruncatedSVD(
+                n_components=self.n_components,
+                random_state=self.seed
+            )
+            U = svd.fit_transform(X)
+            Vt = svd.components_
+            loss_hist = None
+
+        # Handle missing data.
+        else:
+            U, Vt, loss_hist = _fit_tsvd(
+                X, self.n_components, mask,
+                self.method, self.init, self.tol,
+                self.maxiter, self.seed
+            )
+
+        # Store factors.
+        U = U[:, None] if U.ndim == 1 else U
+        Vt = Vt[None, :] if Vt.ndim == 1 else Vt
+        self._factors = U, Vt
+
+        # Store loss history.
+        if overwrite_loss:
+            self.loss_hist = loss_hist
+
+        # If desired, orthogonalize factors by fitting
+        # to imputed dataset.
+        if (mask is not None) and self.orthogonalize:
+            self.fit(self.predict(), mask=None, overwrite_loss=False)
 
     def predict(self):
         return np.dot(*self.factors)
@@ -123,7 +148,7 @@ class NMF:
             raise_not_fitted("NMF", "factors")
 
 
-def _fit_nmf(
+def _fit_tsvd(
         X, rank, mask, method, init, tol, maxiter, seed):
     """
     Dispatches the desired optimization method.
@@ -156,8 +181,8 @@ def _fit_nmf(
         (n_iterations,).
     """
 
-    if method == "hals":
-        return nmf_hals(
+    if method == "als":
+        return tsvd_als(
             X, rank, mask, init, tol, maxiter, seed)
 
     else:
@@ -165,7 +190,7 @@ def _fit_nmf(
             "Did not recognize fitting method.")
 
 
-def _init_nmf(X, rank, mask, init, seed):
+def _init_tsvd(X, rank, mask, init, seed):
     """
     Dispatches the desired initialization method.
 
@@ -209,35 +234,31 @@ def _init_nmf(X, rank, mask, init, seed):
     rs = get_random_state(seed)
 
     # Random initialization.
-    if init == "rand":
+    if init == "rand_orth":
 
         # Randomized initialization.
-        W = rs.rand(m, rank)
-        H = rs.rand(rank, n)
+        U = rs.randn(m, rank)
+        Vt = rs.randn(rank, n)
 
         # Determine appropriate scaling.
-        if mask is None:
-            alpha = np.sqrt(
-                xtx / np.sum(np.dot(W.T, W) * np.dot(H, H.T)))
-        else:
-            e = np.dot(W, H) * mask
-            alpha = np.sqrt(
-                xtx / np.dot(e.ravel(), e.ravel()))
+        e = np.dot(U, Vt) * mask
+        alpha = np.sqrt(
+            xtx / np.dot(e.ravel(), e.ravel()))
 
         # Scale randomized initialization.
-        W *= alpha
-        H *= alpha
+        U *= alpha
+        Vt *= alpha
 
     else:
         raise NotImplementedError(
             "Did not recognize init method.")
 
-    return W, H, xtx
+    return U, Vt, xtx
 
 
-def nmf_hals(X, rank, mask, init, tol, maxiter, seed):
+def tsvd_als(X, rank, mask, init, tol, maxiter, seed):
     """
-    Fits NMF using Hierarchical Least Squares.
+    Fits truncated SVD by alternating least squares (ALS).
 
     Parameters
     ----------
@@ -256,105 +277,76 @@ def nmf_hals(X, rank, mask, init, tol, maxiter, seed):
 
     Returns
     -------
-    W : ndarray
+    U : ndarray
         First factor matrix. Has shape (m, rank).
-    H : ndarray
+    Vt : ndarray
         Second factor matrix. Has shape (rank, n).
     loss_hist : ndarray
         Vector holding loss values. Has shape
         (n_iterations,).
     """
 
-    W, H, xtx = _init_nmf(X, rank, mask, init, seed)
+    U, Vt, xtx = _init_tsvd(X, rank, mask, init, seed)
+
+    m, n = X.shape
+    mX = mask * X
 
     loss_hist = []
 
-    if mask is None:
-        update_rule = _hals_update
-        inner_iters = 3
-        mask_T = None
-    else:
-        update_rule = _hals_update_with_mask
-        inner_iters = 1
-        mask_T = mask.T
-
     for itr in range(maxiter):
 
-        # Update W.
-        update_rule(X, W, H, mask, inner_iters)
+        # Update U.
+        U = censored_lstsq(Vt.T, X.T, mask.T).T
 
-        # Update H.
-        l2 = update_rule(X.T, H.T, W.T, mask_T, inner_iters)
+        # Update Vt.
+        Vt = censored_lstsq(U, X, mask)
 
         # Record loss.
-        if mask is None:
-            loss_hist.append((xtx + l2) / xtx)
+        if m > n:
+            utxv = np.sum(U * np.dot(mX, Vt.T))
         else:
-            loss_hist.append(l2 / xtx)
+            utxv = np.sum(np.dot(U.T, mX) * Vt)
+        utuvtv = np.sum(np.dot(U.T, U) * np.dot(Vt, Vt.T))
+
+        loss_hist.append(xtx - 2 * utxv + utuvtv)
 
         # Check convergence.
         if (itr > 0) and ((loss_hist[-2] - loss_hist[-1]) < tol):
             break
 
-    return W, H, np.array(loss_hist)
+    return U, Vt, np.array(loss_hist)
 
 
-@numba.jit(nopython=True, cache=True)
-def _hals_update(X, W, H, mask, n_iters):
+def censored_lstsq(A, B, M):
     """
-    Updates W. Follows notation in:
+    Solves least squares problem subject to missing data.
 
-    Gillis N, Glineur F (2012). Accelerated multiplicative updates
-    and hierarchical ALS algorithms for nonnegative matrix
-    factorization. Neural computation, 24(4), 1085-1105.
-    """
+    Args
+    ----
+    A (ndarray) : m x r matrix
+    B (ndarray) : m x n matrix
+    M (ndarray) : m x n binary matrix (zeros indicate missing values)
 
-    # Problem dimensions.
-    rank = W.shape[1]
-    indices = np.arange(rank)
-
-    # Cache gram matrices.
-    A = np.dot(X, H.T)
-    B = np.dot(H, H.T)
-
-    # Handle special case of rank-1 model.
-    if rank == 1:
-        W[:] = np.maximum(0.0, A / B)
-
-    # Handle rank > 1 cases.
-    else:
-        for j in range(n_iters):
-            for p in range(rank):
-                idx = (indices != p)
-                Cp = np.dot(W[:, idx], B[idx][:, p])
-                r = (A[:, p] - Cp) / B[p, p]
-                W[:, p] = np.maximum(r, 0.0)
-
-    return -2 * np.sum(W * A) + np.sum(np.dot(W.T, W) * B)
-
-
-@numba.jit(nopython=True, cache=True)
-def _hals_update_with_mask(X, W, H, mask, n_iters):
-    """
-    Updates W.
+    Returns
+    -------
+    X (ndarray) : r x n matrix that minimizes norm(M*(AX - B))
     """
 
-    rank = W.shape[1]
-    indices = np.arange(rank)
+    # If B is a vector, simply drop out corresponding rows in A
+    if B.ndim == 1 or B.shape[1] == 1:
+        return np.linalg.leastsq(A[M], B[M])[0]
 
-    # Handle special case of rank-1 model.
-    if rank == 1:
-        W[:, 0] = \
-            np.dot(mask * X, H[0]) / np.dot(mask * H, H[0])
-        mr = mask * (X - np.dot(W, H))
-        return np.dot(mr.ravel(), mr.ravel())
+    # Ensure A is matrix.
+    if A.ndim == 1:
+        A = A[:, None]
 
-    # Handle rank > 1 cases.
-    for p in range(rank):
-        idx = (indices != p)
-        resid = X - np.dot(W[:, idx], H[idx, :])
-        r = np.dot(mask * resid, H[p]) / np.dot(mask * H[(p,)], H[p])
-        W[:, p] = np.maximum(r, 0.0)
+    # If B is a matrix, convert to tensor form.
+    #   - right hand side has shape (n, r, 1).
+    rhs = np.dot(A.T, M * B).T[:, :, None]
+    #   - left hand side has shape (n, r, r).
+    lhs = np.matmul(A.T[None, :, :], M.T[:, :, None] * A[None, :, :])
+    #   - result has shape (n, r, 1).
+    X = np.linalg.solve(lhs, rhs)
 
-    mr = mask * (resid - np.outer(W[:, -1], H[-1]))
-    return np.dot(mr.ravel(), mr.ravel())
+    # Squeeze and transpose result to get (r, n) shaped solution.
+    return np.squeeze(X).T
