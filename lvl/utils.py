@@ -18,7 +18,7 @@ def get_random_state(seed_or_rs):
         return npr.RandomState(seed_or_rs)
 
 
-def rand_orth(m, n=None):
+def rand_orth(m, n=None, seed=None):
     """
     Creates a random matrix with orthogonal columns or rows.
 
@@ -36,8 +36,9 @@ def rand_orth(m, n=None):
         If m < n, the rows are orthonormal. If m == n, the result is
         an orthogonal matrix.
     """
+    rs = get_random_state(seed)
     n = m if n is None else n
     if n > m:
-        return np.linalg.qr(np.random.randn(n, m))[0].T
+        return np.linalg.qr(rs.randn(n, m))[0].T
     else:
-        return np.linalg.qr(np.random.randn(m, n))[0]
+        return np.linalg.qr(rs.randn(m, n))[0]
