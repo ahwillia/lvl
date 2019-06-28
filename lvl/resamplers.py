@@ -4,8 +4,8 @@ Methods for shuffling/resampling data to achieve baseline model scores.
 
 import numpy as np
 
-from .utils import rand_orth, get_random_state
-from .factor_models import NMF
+from lvl.utils import rand_orth, get_random_state
+from lvl.factor_models import NMF
 
 
 def destroy_clusters(X, method="rotation", n_components=None, seed=None):

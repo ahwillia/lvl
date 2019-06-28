@@ -4,8 +4,8 @@ Truncated Singular Value Decomposition.
 import numpy as np
 from sklearn.decomposition import TruncatedSVD as _TruncatedSVD
 
-from ..exceptions import raise_not_fitted, raise_no_method, raise_no_init
-from ..utils import get_random_state, rand_orth
+from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
+from lvl.utils import get_random_state, rand_orth
 
 
 class TSVD:
@@ -33,14 +33,14 @@ class TSVD:
         # Check that optimization method is recognized.
         METHODS = ("als",)
         if method not in METHODS:
-            raise_no_method("TSVD", method, METHODS)
+            raise_no_method(self, method, METHODS)
         else:
             self.method = method
 
         # Check that initialization method is recognized.
         INITS = ("rand_orth",)
         if init not in INITS:
-            raise_no_init("TSVD", init, INITS)
+            raise_no_init(self, init, INITS)
         else:
             self.init = init
 
@@ -88,7 +88,8 @@ class TSVD:
             self.loss_hist = loss_hist
 
         # If desired, orthogonalize factors by fitting
-        # to imputed dataset.
+        # to imputed dataset. When mask is None factors
+        # are orthogonalized by default.
         if (mask is not None) and self.orthogonalize:
             self.fit(self.predict(), mask=None, overwrite_loss=False)
 
@@ -144,7 +145,7 @@ class TSVD:
 
     def _assert_fitted(self):
         if self._factors is None:
-            raise_not_fitted("NMF", "factors")
+            raise_not_fitted(self, "factors")
 
 
 def _fit_tsvd(

@@ -4,8 +4,8 @@ K-means clustering
 import numpy as np
 import numba
 
-from ..exceptions import raise_not_fitted, raise_no_method, raise_no_init
-from ..utils import get_random_state
+from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
+from lvl.utils import get_random_state
 
 
 class KMeans:
@@ -30,14 +30,14 @@ class KMeans:
         # Check that optimization method is recognized.
         METHODS = ("lloyds",)
         if method not in METHODS:
-            raise_no_method("KMeans", method, METHODS)
+            raise_no_method(self, method, METHODS)
         else:
             self.method = method
 
         # Check that initialization method is recognized.
         INITS = ("rand",)
         if init not in INITS:
-            raise_no_init("KMeans", init, INITS)
+            raise_no_init(self, init, INITS)
         else:
             self.init = init
 
@@ -118,7 +118,8 @@ class KMeans:
 
     def _assert_fitted(self):
         if self._factors is None:
-            raise_not_fitted("NMF", "factors")
+            raise_not_fitted(
+                type(self).__name__, "factors")
 
 
 def _fit_kmeans(
@@ -296,10 +297,6 @@ def _assign_clusters(X, centroids, assignments):
             for j in range(J):
                 if not np.isnan(X[i, j]):
                     dist += (X[i, j] - centroids[k, j]) ** 2
-
-            # if not np.isfinite(dist):
-            #     import ipdb
-            #     ipdb.set_trace()
 
             if dist < best_dist:
                 assignments[i] = k

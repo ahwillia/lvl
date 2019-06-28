@@ -3,16 +3,15 @@ Toy synthetic dataset based on the Lorenz attractor.
 """
 import numpy as np
 
-from ..utils import rand_orth, get_random_state
+from lvl.utils import rand_orth, get_random_state
 
 
-def simulate_lorenz(
+def poisson_lorenz(
         n_out, n_steps, x0=None, dt=0.01, latent_noise_scale=10.0,
-        readout_weights_scale=1e-1, readout_weights="orthogonal",
-        observations="poisson", seed=None):
+        max_rate=10.0, min_rate=0.01, seed=None):
     """
-    Simulate high-dimensional data following low-dimensional
-    Lorenz attractor dynamics.
+    Simulate high-dimensional count data series following
+    low-dimensional Lorenz attractor dynamics.
 
     Parameters
     ----------
@@ -27,31 +26,23 @@ def simulate_lorenz(
         Scale of Wiener process noise on latent states.
         Note that the square root of dt also scales
         this noise source (Euler–Maruyama integration).
-    readout_weights_scale : float
-        Scale of readout weight parameters. The Frobenius
-        norm of the weight matrix is scaled to equal
-        this parameter.
-    readout_weights : str
-        Specifies form of the readout weights. Options
-        are ("orthogonal", "randn", "rand") corresponding
-        to a random orthogonal matrix, random gaussian
-        weights, random uniform weights on the interval
-        [0, 1).
-    observations : str
-        Specifies the form of the observations. Options
-        are ("poisson",).
+    max_rate : float
+        Maximum rate parameter in the simulated
+        dataset.
+    min_rate : float
+        Minimum rate parameter in the simulated
+        dataset.
     seed : None, int, or np.random.RandomState
         Seed for random number generator.
 
     Returns
     -------
     data : ndarray
-        Data array holding simulated data. Has shape
+        Data array holding simulated count data. Has shape
         (n_steps, n_out).
-    denoised : ndarray
-        Data array in absence of noise. For Poisson
-        distributed observations, these are the
-        log firing rates. Has shape (n_steps, n_out).
+    rates : ndarray
+        True time-varying rate parameters, associated with
+        'data'. Has shape (n_steps, n_out).
     W : ndarray
         Weight matrix. Has shape (n_out, 3).
     X : ndarray
@@ -72,20 +63,7 @@ def simulate_lorenz(
     x_hist = np.empty((n_steps, 3))
 
     # Draw random readout matrix.
-    if readout_weights == "orthogonal":
-        W = rand_orth(3, n_out, seed=rs)
-
-    elif readout_weights == "randn":
-        W = rs.randn(3, n_out)
-
-    elif readout_weights == "rand":
-        W = rs.rand(3, n_out)
-    else:
-        raise ValueError(
-            "Did not recognize 'readout_weights' option.")
-
-    # Rescale output matrix to desired norm.
-    W *= readout_weights_scale / np.linalg.norm(W)
+    W = rand_orth(3, n_out, seed=rs)
 
     # Simulate latent states.
     for t in range(n_steps):
@@ -106,15 +84,16 @@ def simulate_lorenz(
     # in the observed data.
     x_hist = x_hist - np.mean(x_hist, axis=0)
 
-    # Compute data in absence of noise.
-    denoised = np.dot(x_hist, W)
+    # Rescale rates to desired range.
+    log_rates = np.dot(x_hist, W)
+    log_rates = \
+        (log_rates - np.min(log_rates)) / np.ptp(log_rates)
+    log_rates = \
+        log_rates * np.log(max_rate / min_rate) + np.log(min_rate)
+    rates = np.exp(log_rates)
 
-    # Add noise.
-    if observations == "poisson":
-        data = rs.poisson(np.exp(denoised))
-    else:
-        raise ValueError(
-            "Did not recognize 'observations' option.")
+    # Draw Poisson distributed observations.
+    data = rs.poisson(rates)
 
     # Return quantities of interest.
-    return data, denoised, W, x_hist
+    return data, rates, W, x_hist

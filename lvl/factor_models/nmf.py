@@ -10,13 +10,13 @@ Gillis, N. (2014). The why and how of nonnegative matrix factorization.
 import numpy as np
 import numba
 
-from ..exceptions import raise_not_fitted, raise_no_method, raise_no_init
-from ..utils import get_random_state
+from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
+from lvl.utils import get_random_state
 
 
 class NMF:
     """
-    Nonnegative Matrix Factorization (NMF) class.
+    Nonnegative Matrix Factorization (NMF) with quadratic loss.
     """
 
     def __init__(
@@ -37,14 +37,14 @@ class NMF:
         # Check that optimization method is recognized.
         METHODS = ("hals",)
         if method not in METHODS:
-            raise_no_method("NMF", method, METHODS)
+            raise_no_method(self, method, METHODS)
         else:
             self.method = method
 
         # Check that initialization method is recognized.
         INITS = ("rand",)
         if init not in INITS:
-            raise_no_init("NMF", init, INITS)
+            raise_no_init(self, init, INITS)
         else:
             self.init = init
 
@@ -120,7 +120,7 @@ class NMF:
 
     def _assert_fitted(self):
         if self._factors is None:
-            raise_not_fitted("NMF", "factors")
+            raise_not_fitted(self, "factors")
 
 
 def _fit_nmf(

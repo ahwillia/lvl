@@ -1,1 +1,1 @@
-from .lorenz import simulate_lorenz
+from lvl.datasets.lorenz import poisson_lorenz
