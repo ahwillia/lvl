@@ -83,8 +83,8 @@ class NMF:
 
         # Extend factors via nonnegative least squares, fit
         # with coordinate descent (cd).
-        H_ = nnls(W, B, method="cd")
-        W_ = nnls(H.T, C.T, method="cd").T
+        H_ = nnls(W, B, method="cd", tol=self.tol)
+        W_ = nnls(H.T, C.T, method="cd", tol=self.tol).T
         self._factors = (
             np.row_stack((W, W_)),
             np.column_stack((H, H_))

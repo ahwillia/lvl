@@ -51,7 +51,7 @@ def nnls(A, B, method="cd", max_iter=100, tol=1e-9):
         raise ValueError("Did not recognize method.")
 
 
-@numba.jit(nopython=True, parallel=True)
+@numba.jit(nopython=True, cache=True)
 def cd_nnls(A, B, max_iter, tol):
     """
     Solve ``argmin_x || Ax - b ||_2`` for ``x>=0``
@@ -83,7 +83,7 @@ def cd_nnls(A, B, max_iter, tol):
     return X
 
 
-@numba.jit(nopython=True, parallel=True)
+@numba.jit(nopython=True, cache=True)
 def cd_quad_prog(H, c, x, max_iter, tol):
     """
     Solves unconstrained quadratic programming problem
