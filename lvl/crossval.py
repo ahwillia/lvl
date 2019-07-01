@@ -40,19 +40,19 @@ def speckled_cv_scores(
     return train_scores, test_scores
 
 
-def speckled_mask(shape, heldout_frac, random_state):
+def speckled_mask(shape, heldout_frac, rs):
     """
     Creates randomized speckled holdout pattern.
     """
 
     # Choose heldout indices.
-    heldout_num = int(heldout_frac * data.size)
-    i = random_state.choice(
-        data.size, heldout_num, replace=False)
+    heldout_num = int(heldout_frac * np.prod(shape))
+    i = rs.choice(
+        np.prod(shape), heldout_num, replace=False)
 
     # Construct mask.
-    mask = np.ones(data.shape, dtype=bool)
-    mask[np.unravel_index(i, data.shape)] = False
+    mask = np.ones(shape, dtype=bool)
+    mask[np.unravel_index(i, shape)] = False
 
     # Ensure one observation per row and column.
     safe_entries = np.zeros_like(mask)
@@ -86,35 +86,32 @@ def bicv_scores(
     # Run cross-validation.
     for itr in range(n_repeats):
 
-        # Draw rows and columns for training set.
-        ii = rs.choice(
-            m, size=int(m - m * heldout_frac), replace=False)
-        jj = rs.choice(
-            n, size=int(n - n * heldout_frac), replace=False)
+        # Create shuffled view into data.
+        ii = rs.permutation(m)
+        jj = rs.permutation(n)
+        Xs = np.copy(X[ii][:, jj])
 
-        ni = np.setdiff1d(np.arange(m), ii)
-        nj = np.setdiff1d(np.arange(n), jj)
-
-        A = X[ii][:, jj]
-        B = X[ii][:, nj]
-        C = X[ni][:, jj]
+        # Partition columns and rows.
+        si = int(m - m * heldout_frac)
+        sj = int(n - n * heldout_frac)
 
         # Fit model to training set.
-        model.fit(A, mask=None)
+        model.fit(Xs[:si, :sj], mask=None)
 
         # Extend model factors.
-        model.bicv_extend(B, C)
+        model.bicv_extend(Xs[:si, sj:], Xs[si:, :sj])
 
         # Construct mask for training set.
         train_mask = np.zeros((m, n), dtype=bool)
-        train_mask[ii][:, jj] = True
+        train_mask[:si, :sj] = True
 
         # Construct mask for test set.
         test_mask = np.zeros((m, n), dtype=bool)
-        train_mask[ni][:, nj] = True
+        test_mask[si:, sj:] = True
 
         # Compute performance on train and test partitions.
-        train_scores[itr] = model.score(X, mask=train_mask)
-        test_scores[itr] = model.score(X, mask=test_mask)
+        train_scores[itr] = model.score(Xs, mask=train_mask)
+        test_scores[itr] = model.score(Xs, mask=test_mask)
+
 
     return train_scores, test_scores

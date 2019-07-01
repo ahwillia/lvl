@@ -10,6 +10,7 @@ Gillis, N. (2014). The why and how of nonnegative matrix factorization.
 import numpy as np
 import numba
 
+from lvl.nnls import nnls
 from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
 from lvl.utils import get_random_state
 
@@ -69,11 +70,21 @@ class NMF:
         self._factors = W, H
 
     def bicv_extend(self, B, C):
+        """
+        Extends model fit for bi-cross-validation.
+        """
 
+        # Get previously fit model factors.
         W, H = self.factors
-        H_ = nonneg_lstsq(W, B)
-        W_ = nonneg_lstsq(H.T, C.T).T
 
+        # Check inputs.
+        assert B.shape[0] == W.shape[0]
+        assert C.shape[1] == H.shape[1]
+
+        # Extend factors via nonnegative least squares, fit
+        # with coordinate descent (cd).
+        H_ = nnls(W, B, method="cd")
+        W_ = nnls(H.T, C.T, method="cd").T
         self._factors = (
             np.row_stack((W, W_)),
             np.column_stack((H, H_))
