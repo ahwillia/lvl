@@ -68,6 +68,17 @@ class NMF:
         )
         self._factors = W, H
 
+    def bicv_extend(self, B, C):
+
+        W, H = self.factors
+        H_ = nonneg_lstsq(W, B)
+        W_ = nonneg_lstsq(H.T, C.T).T
+
+        self._factors = (
+            np.row_stack((W, W_)),
+            np.column_stack((H, H_))
+        )
+
     def predict(self):
         return np.dot(*self.factors)
 
