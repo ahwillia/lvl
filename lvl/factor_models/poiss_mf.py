@@ -36,7 +36,7 @@ class PoissonMF:
         else:
             self.method = method
 
-    def fit(self, X, mask=None):
+    def fit(self, X, mask=None, Vbasis=None):
         """
         Fits model parameters.
 
@@ -51,7 +51,7 @@ class PoissonMF:
         """
         U, Vt, self.loss_hist = _fit_poiss_mf(
             self.method, X, self.n_components,
-            mask, self.tol, self.maxiter, self.seed
+            mask, Vbasis, self.tol, self.maxiter, self.seed
         )
         self._factors = U, Vt
 
@@ -100,7 +100,7 @@ def _fit_poiss_mf(method, *args):
 # ====================================================== #
 
 def poisson_mf_cd(
-        X, rank, mask, tol, maxiter, seed):
+        X, rank, mask, Vbasis, tol, maxiter, seed):
     """
     Parameters
     ----------
@@ -131,14 +131,19 @@ def poisson_mf_cd(
     X = np.asarray(X, dtype='float')
 
     # Initialize parameters.
+    loss_hist = []
     m, n = X.shape
     rs = get_random_state(seed)
+
     U = rs.uniform(-1, 1, size=(m, rank))
-    Vt = rs.uniform(-1, 1, size=(rank, n))
-    loss_hist = []
+    if Vbasis is None:
+        Vt = rs.uniform(-1, 1, size=(rank, n))
+    else:
+        Vt = rs.uniform(-1, 1, size=(rank, Vbasis.shape[0]))
 
     if mask is None:
         update_rule = _poiss_cd_update
+        basis_update = _poiss_cd_update_with_basis
         mask_T = None
     else:
         update_rule = _poiss_cd_update_with_mask
@@ -147,25 +152,32 @@ def poisson_mf_cd(
     for itr in range(maxiter):
 
         # Update U.
-        ls = update_rule(X, U, Vt, mask)
+        if Vbasis is None:
+            update_rule(X, U, Vt, mask)
+        else:
+            update_rule(X, U, Vt @ Vbasis, mask)
 
         # Update V.
-        ls = update_rule(X.T, Vt.T, U.T, mask_T)
+        if Vbasis is None:
+            ls = update_rule(X.T, Vt.T, U.T, mask_T)
+        else:
+            ls = basis_update(X.T, Vt.T, U.T, mask_T, Vbasis)
 
         # Check convergence.
-        loss_hist.append(ls)
+        loss_hist.append(ls / X.size)
         if itr > 0 and ((loss_hist[-2] - loss_hist[-1]) < tol):
             break
 
     return U, Vt, np.array(loss_hist)
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def _poiss_cd_update(Y, U, Vt, mask):
     """Updates U."""
 
     m, n = Y.shape
     rank = U.shape[1]
+    U_last = np.empty(U.shape[0])
 
     eUV = np.exp(np.dot(U, Vt))
     new_loss = np.sum(eUV) - np.sum(np.dot(U.T, Y) * Vt)
@@ -175,20 +187,62 @@ def _poiss_cd_update(Y, U, Vt, mask):
         # Store current loss.
         last_loss = new_loss
 
-        # Compute search direction. Gradient divided by Hessian
-        # (note that the Hessian is diagonal).
+        # Compute search direction, as inverse Hessian times gradient.
+        # (the Hessian is diagonal, so the inverse is simple division).
         search_dir = np.dot(eUV - Y, Vt[r]) / np.dot(eUV, Vt[r] * Vt[r])
 
         # Search for update with backtracking.
         new_loss = np.inf
+        U_last[:] = U[:, r]
         ss = 1.0
 
         while new_loss > last_loss:
-            U[:, r] = U[:, r] - ss * search_dir
+            U[:, r] = U_last - ss * search_dir
             eUV = np.exp(np.dot(U, Vt))
             new_loss = np.sum(eUV) - np.sum(np.dot(U.T, Y) * Vt)
             ss *= 0.5
             if ss < 1e-4:
+                U[:, r] = U_last
+                break
+
+    return new_loss
+
+
+# @numba.jit(nopython=True, cache=True)
+def _poiss_cd_update_with_basis(Y, U, Vt, mask, Bt):
+    """Updates U."""
+
+    m, n = Y.shape
+    rank = U.shape[1]
+    U_last = np.empty(U.shape[0])
+
+    BtY = Bt @ Y
+    eUV = np.exp(Bt.T @ U @ Vt)
+    new_loss = np.sum(eUV) - np.sum((U.T @ BtY) * Vt)
+
+    for r in np.random.permutation(rank):
+
+        # Store current loss.
+        last_loss = new_loss
+
+        # Compute search direction, as inverse Hessian times gradient.
+        # (the Hessian is diagonal, so the inverse is simple division).
+        grad = Bt @ ((eUV - Y) @ Vt[r])
+        hess = (Bt * Bt) @ (eUV - Y) @ (Vt[r] * Vt[r])
+        search_dir = grad / hess
+
+        # Search for update with backtracking.
+        new_loss = np.inf
+        U_last[:] = U[:, r]
+        ss = 1.0
+
+        while new_loss > last_loss:
+            U[:, r] = U_last - ss * search_dir
+            eUV = np.exp(Bt.T @ U @ Vt)
+            new_loss = np.sum(eUV) - np.sum((U.T @ BtY) * Vt)
+            ss *= 0.5
+            if ss < 1e-4:
+                U[:, r] = U_last
                 break
 
     return new_loss
