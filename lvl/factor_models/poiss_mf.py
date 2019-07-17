@@ -208,7 +208,7 @@ def _poiss_cd_update(Y, U, Vt, mask):
     return new_loss
 
 
-# @numba.jit(nopython=True, cache=True)
+@numba.jit(nopython=True, cache=True)
 def _poiss_cd_update_with_basis(Y, U, Vt, mask, Bt):
     """Updates U."""
 
