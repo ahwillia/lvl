@@ -238,7 +238,7 @@ def _poiss_cd_update_with_basis(Y, U, Vt, mask, Bt):
 
         while new_loss > last_loss:
             U[:, r] = U_last - ss * search_dir
-            eUV = np.exp(Bt.T @ U @ Vt)
+            eUV = np.exp((Bt.T @ U) @ Vt)
             new_loss = np.sum(eUV) - np.sum((U.T @ BtY) * Vt)
             ss *= 0.5
             if ss < 1e-4:

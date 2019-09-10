@@ -3,6 +3,7 @@ Common utility functions.
 """
 import numpy as np
 import numpy.random as npr
+from scipy.special import logsumexp
 
 
 def get_random_state(seed_or_rs):
@@ -42,3 +43,7 @@ def rand_orth(m, n=None, seed=None):
         return np.linalg.qr(rs.randn(n, m))[0].T
     else:
         return np.linalg.qr(rs.randn(m, n))[0]
+
+
+def softmax(x, axis=None):
+    return np.exp(x - logsumexp(x, axis=axis, keepdims=True))

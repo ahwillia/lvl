@@ -60,9 +60,9 @@ def truncated_fourier(n_freq, shape):
         if np.sum(c) == 0:
             continue  # constant term is already included.
 
-        ca = np.array(c)[:, None]
-        S[i] = np.sin(np.sum(gxs * ca, axis=0))
-        S[i + 1] = np.cos(np.sum(gxs * ca, axis=0))
+        cxs = np.sum(gxs * np.array(c)[:, None], axis=0)
+        S[i] = np.sin(cxs)
+        S[i + 1] = np.cos(cxs)
         i += 2
 
     print(i)

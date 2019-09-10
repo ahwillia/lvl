@@ -3,19 +3,22 @@ K-means clustering
 """
 import numpy as np
 import numba
+from scipy.spatial.distance import cdist
+
+from numpy.linalg import lstsq
 
 from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
-from lvl.utils import get_random_state
+from lvl.utils import get_random_state, softmax
 
 
-class KMeans:
+class SoftKMeans:
     """
-    Specifies K-means clustering model.
+    Specifies Soft K-means clustering model.
     """
 
     def __init__(
-            self, n_components, method="lloyds", init="rand",
-            seed=None, maxiter=100):
+            self, n_components, method="em", init="rand",
+            seed=None, tol=1e-5, maxiter=100):
 
         # Model options.
         self.n_components = n_components
@@ -23,12 +26,13 @@ class KMeans:
         # Optimization parameters.
         self.maxiter = maxiter
         self.seed = seed
+        self.tol = tol
 
         # Model parameters.
         self._factors = None
 
         # Check that optimization method is recognized.
-        METHODS = ("lloyds",)
+        METHODS = ("em",)
         if method not in METHODS:
             raise_no_method(self, method, METHODS)
         else:
@@ -54,17 +58,11 @@ class KMeans:
             (where mask == 1) and unobserved data points
             (where mask == 0). Has shape (m, n).
         """
-        assignments, centroids = _fit_kmeans(
+        self._factors = _fit_soft_kmeans(
             np.copy(X), self.n_components, mask,
             self.method, self.init,
-            self.maxiter, self.seed
+            self.maxiter, self.tol, self.seed
         )
-
-        # Create one-hot representation of cluster assignments.
-        U = np.zeros((X.shape[0], self.n_components))
-        U[np.arange(X.shape[0]), assignments] = 1.0
-
-        self._factors = U, centroids
 
     def predict(self):
         return np.dot(*self.factors)
@@ -122,8 +120,8 @@ class KMeans:
                 type(self).__name__, "factors")
 
 
-def _fit_kmeans(
-        X, rank, mask, method, init, maxiter, seed):
+def _fit_soft_kmeans(
+        X, rank, mask, method, init, maxiter, tol, seed):
     """
     Dispatches the desired optimization method.
 
@@ -139,6 +137,8 @@ def _fit_kmeans(
         Specifies initialization method.
     maxiter : int
         Maximum number of iterations.
+    tol : float
+        Convergence tolerance.
     seed : int or numpy.random.RandomState
         Seeds random number generator.
 
@@ -153,16 +153,16 @@ def _fit_kmeans(
         (n_iterations,).
     """
 
-    if method == "lloyds":
-        return kmeans_lloyds(
-            X, rank, mask, init, maxiter, seed)
+    if method == "em":
+        return soft_kmeans_em(
+            X, rank, mask, init, maxiter, tol, seed)
 
     else:
         raise NotImplementedError(
             "Did not recognize fitting method.")
 
 
-def _init_kmeans(X, rank, mask, init, seed):
+def _init_soft_kmeans(X, rank, mask, init, seed):
     """
     Dispatches the desired initialization method.
 
@@ -205,7 +205,7 @@ def _init_kmeans(X, rank, mask, init, seed):
     return centroids
 
 
-def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
+def soft_kmeans_em(X, rank, mask, init, maxiter, tol, seed):
     """
     Fits K-means clustering by standard method (Lloyd's algorithm).
 
@@ -219,6 +219,8 @@ def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
         Mask for missing data. Has shape (m, n).
     maxiter : int
         Number of iterations.
+    tol : float
+        Convergence tolerance.
     seed : int or np.random.RandomState
         Seed for random number generator for initialization.
 
@@ -238,72 +240,28 @@ def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
         X = np.copy(X)
         X[~mask] = np.nanmean(X[mask])
 
-    # Initialize centroids and allocate space for assignments.
+    # Initialize centroids, has shape (rank, n).
     m, n = X.shape
-    centroids = _init_kmeans(X, rank, mask, init, seed)
-    assignments = np.empty(m, dtype=int)
-    last_assignments = np.full(m, -1)
-
-    # Set masked elements to NaN.
-    if mask is not None:
-        X[~mask] = np.nan
+    centroids = _init_soft_kmeans(X, rank, mask, init, seed)
+    resp = softmax(-cdist(X, centroids, metric='sqeuclidean'), axis=-1)
+    last_resp = np.copy(resp)
 
     for itr in range(maxiter):
 
-        # Compute cluster assignments for each datapoint.
-        _assign_clusters(X, centroids, assignments)
-
         # Update centroids.
-        for k in range(rank):
-            centroids[k] = np.nanmean(X[assignments == k], axis=0)
+        centroids = lstsq(resp, X, rcond=None)[0]
+
+        # Compute cluster assignments for each datapoint.
+        resp = softmax(-cdist(X, centroids, metric='sqeuclidean'), axis=-1)
+
+        # Update masked elements.
+        if mask is not None:
+            X[~mask] = (resp @ centroids)[~mask]
 
         # Check convergence.
-        if np.all(last_assignments == assignments):
+        if np.linalg.norm(resp - last_resp) < tol:
             break
         else:
-            last_assignments[:] = assignments
+            last_resp[:] = resp
 
-    return assignments, centroids
-
-
-@numba.jit(nopython=True, parallel=True)
-def _assign_clusters(X, centroids, assignments):
-    """
-    Assign each datapoint to closest cluster, ignoring nans.
-
-    Parameters
-    ----------
-    X : ndarray
-        Data matrix. Has shape (m, n). NaN values are considered
-        to be missing data.
-    centroids : ndarray
-        Matrix holding estimates of cluster centroids. Has shape
-        (n_clusters, n).
-    assignments : ndarray
-        Vector holding cluster assignments of each datapoint.
-        Has shape (m,). Values are integers on the interval
-        [0, n_clusters).
-    """
-
-    I, J = X.shape
-    K = centroids.shape[0]
-
-    for i in range(I):
-
-        best_dist = np.inf
-
-        for k in range(K):
-            dist = 0.0
-            count = 0
-
-            for j in range(J):
-                if not np.isnan(X[i, j]):
-                    dist += (X[i, j] - centroids[k, j]) ** 2
-                    count += 1
-
-            if count == 0:
-                continue
-
-            elif (dist / count) < best_dist:
-                assignments[i] = k
-                best_dist = dist / count
+    return resp, centroids

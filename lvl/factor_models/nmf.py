@@ -26,6 +26,8 @@ class NMF:
 
         # Model hyperparameters.
         self.n_components = n_components
+        if n_components <= 0:
+            raise ValueError("Expected n_components to be an integer >= 1.")
 
         # Optimization parameters.
         self.tol = tol
@@ -268,7 +270,9 @@ def nmf_hals(X, rank, mask, init, tol, maxiter, seed):
     rank : int
         Number of components.
     mask : ndarray
-        Mask for missing data. Has shape (m, n).
+        Binary array specifying observed data points
+        (where mask == 1) and unobserved data points
+        (where mask == 0). Has shape (m, n).
     tol : float
         Convergence tolerance.
     maxiter : int
@@ -289,30 +293,51 @@ def nmf_hals(X, rank, mask, init, tol, maxiter, seed):
 
     W, H, xtx = _init_nmf(X, rank, mask, init, seed)
 
+    m, n = X.shape
     loss_hist = []
 
-    if mask is None:
-        update_rule = _hals_update
-        inner_iters = 3
-        mask_T = None
-    else:
-        update_rule = _hals_update_with_mask
-        inner_iters = 1
-        mask_T = mask.T
+    if mask is not None:
+        X = np.copy(X)
+        X[~mask] = np.mean(X[mask])
+        Xpred = np.empty((m, n))
+
+    # Allocate space for intermediate computations.
+    XHt = X @ H.T
+    HHt = H @ H.T
+    WtX = np.empty((rank, n))
+    WtW = np.empty((rank, rank))
 
     for itr in range(maxiter):
 
         # Update W.
-        update_rule(X, W, H, mask, inner_iters)
+        _hals_update(W, XHt, HHt, 3)
+
+        if mask is not None:
+            np.dot(W, H, out=Xpred)
+            X[~mask] = Xpred[~mask]
+
+        np.dot(W.T, X, out=WtX)
+        np.dot(W.T, W, out=WtW)
 
         # Update H.
-        l2 = update_rule(X.T, H.T, W.T, mask_T, inner_iters)
+        _hals_update(H.T, WtX.T, WtW, 3)
+
+        if mask is not None:
+            np.dot(W, H, out=Xpred)
+            X[~mask] = Xpred[~mask]
+
+        np.dot(X, H.T, out=XHt)
+        np.dot(H, H.T, out=HHt)
 
         # Record loss.
         if mask is None:
-            loss_hist.append((xtx + l2) / xtx)
+            loss_hist.append(
+                (xtx - 2 * np.sum(W * XHt) + np.sum(WtW * HHt)) / xtx
+            )
         else:
-            loss_hist.append(l2 / xtx)
+            resid = X - Xpred
+            num = np.dot(resid.ravel(), resid.ravel())
+            loss_hist.append(num / xtx)
 
         # Check convergence.
         if (itr > 0) and ((loss_hist[-2] - loss_hist[-1]) < tol):
@@ -322,7 +347,7 @@ def nmf_hals(X, rank, mask, init, tol, maxiter, seed):
 
 
 @numba.jit(nopython=True, cache=True)
-def _hals_update(X, W, H, mask, n_iters):
+def _hals_update(W, XHt, HHt, n_iters):
     """
     Updates W. Follows notation in:
 
@@ -335,48 +360,15 @@ def _hals_update(X, W, H, mask, n_iters):
     rank = W.shape[1]
     indices = np.arange(rank)
 
-    # Cache gram matrices.
-    A = np.dot(X, H.T)
-    B = np.dot(H, H.T)
-
     # Handle special case of rank-1 model.
     if rank == 1:
-        W[:] = np.maximum(0.0, A / B)
+        W[:] = np.maximum(0.0, XHt / HHt)
 
     # Handle rank > 1 cases.
     else:
         for j in range(n_iters):
             for p in range(rank):
                 idx = (indices != p)
-                Cp = np.dot(W[:, idx], B[idx][:, p])
-                r = (A[:, p] - Cp) / B[p, p]
+                Cp = np.dot(W[:, idx], HHt[idx][:, p])
+                r = (XHt[:, p] - Cp) / HHt[p, p]
                 W[:, p] = np.maximum(r, 0.0)
-
-    return -2 * np.sum(W * A) + np.sum(np.dot(W.T, W) * B)
-
-
-@numba.jit(nopython=True, cache=True)
-def _hals_update_with_mask(X, W, H, mask, n_iters):
-    """
-    Updates W.
-    """
-
-    rank = W.shape[1]
-    indices = np.arange(rank)
-
-    # Handle special case of rank-1 model.
-    if rank == 1:
-        W[:, 0] = \
-            np.dot(mask * X, H[0]) / np.dot(mask * H, H[0])
-        mr = mask * (X - np.dot(W, H))
-        return np.dot(mr.ravel(), mr.ravel())
-
-    # Handle rank > 1 cases.
-    for p in range(rank):
-        idx = (indices != p)
-        resid = X - np.dot(W[:, idx], H[idx, :])
-        r = np.dot(mask * resid, H[p]) / np.dot(mask * H[(p,)], H[p])
-        W[:, p] = np.maximum(r, 0.0)
-
-    mr = mask * (resid - np.outer(W[:, -1], H[-1]))
-    return np.dot(mr.ravel(), mr.ravel())
