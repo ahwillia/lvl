@@ -15,14 +15,16 @@ class KMeans:
 
     def __init__(
             self, n_components, method="lloyds", init="rand",
-            seed=None, maxiter=100):
+            n_restarts=10, tol=1e-4, seed=None, maxiter=100):
 
         # Model options.
         self.n_components = n_components
 
         # Optimization parameters.
         self.maxiter = maxiter
+        self.n_restarts = n_restarts
         self.seed = seed
+        self.tol = tol
 
         # Model parameters.
         self._factors = None
@@ -54,17 +56,30 @@ class KMeans:
             (where mask == 1) and unobserved data points
             (where mask == 0). Has shape (m, n).
         """
-        assignments, centroids = _fit_kmeans(
-            np.copy(X), self.n_components, mask,
-            self.method, self.init,
-            self.maxiter, self.seed
-        )
 
-        # Create one-hot representation of cluster assignments.
-        U = np.zeros((X.shape[0], self.n_components))
-        U[np.arange(X.shape[0]), assignments] = 1.0
+        losses = []
+        for itr in range(self.n_restarts):
+            assignments, Vt = _fit_kmeans(
+                np.copy(X), self.n_components, mask,
+                self.method, self.init, self.maxiter,
+                self.tol, self.seed
+            )
 
-        self._factors = U, centroids
+            # Create one-hot representation of cluster assignments.
+            U = np.zeros((X.shape[0], self.n_components))
+            U[np.arange(X.shape[0]), assignments] = 1.0
+
+            # Compute loss.
+            resid = X - np.dot(U, Vt)
+            if mask is None:
+                loss = np.linalg.norm(resid)
+            else:
+                loss = np.linalg.norm(mask * resid)
+
+            # Save best factors.
+            losses.append(loss)
+            if np.argmin(losses) == itr:
+                self._factors = U, Vt
 
     def predict(self):
         return np.dot(*self.factors)
@@ -123,7 +138,7 @@ class KMeans:
 
 
 def _fit_kmeans(
-        X, rank, mask, method, init, maxiter, seed):
+        X, rank, mask, method, init, maxiter, tol, seed):
     """
     Dispatches the desired optimization method.
 
@@ -139,6 +154,8 @@ def _fit_kmeans(
         Specifies initialization method.
     maxiter : int
         Maximum number of iterations.
+    tol : float
+        Convergence tolerance.
     seed : int or numpy.random.RandomState
         Seeds random number generator.
 
@@ -155,7 +172,7 @@ def _fit_kmeans(
 
     if method == "lloyds":
         return kmeans_lloyds(
-            X, rank, mask, init, maxiter, seed)
+            X, rank, mask, init, maxiter, tol, seed)
 
     else:
         raise NotImplementedError(
@@ -205,7 +222,7 @@ def _init_kmeans(X, rank, mask, init, seed):
     return centroids
 
 
-def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
+def kmeans_lloyds(X, rank, mask, init, maxiter, tol, seed):
     """
     Fits K-means clustering by standard method (Lloyd's algorithm).
 
@@ -219,6 +236,8 @@ def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
         Mask for missing data. Has shape (m, n).
     maxiter : int
         Number of iterations.
+    tol : float
+        Convergence tolerance.
     seed : int or np.random.RandomState
         Seed for random number generator for initialization.
 
@@ -237,61 +256,54 @@ def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
     if mask is not None:
         X = np.copy(X)
         X[~mask] = np.nanmean(X[mask])
+        row_idx, col_idx = np.where(~mask)  # missing indices
+    else:
+        # no missing indices.
+        row_idx = np.array([], dtype='int')
+        col_idx = np.array([], dtype='int')
 
     # Initialize centroids and allocate space for assignments.
     m, n = X.shape
     centroids = _init_kmeans(X, rank, mask, init, seed)
-    assignments = np.empty(m, dtype=int)
+    assignments = np.empty(m, dtype='int')
+    cluster_sizes = np.empty(m, dtype='int')
     last_assignments = np.full(m, -1)
-
-    # Set masked elements to NaN.
-    if mask is not None:
-        X[~mask] = np.nan
+    last_centroids = np.empty_like(centroids)
 
     for itr in range(maxiter):
 
         # Compute cluster assignments for each datapoint.
-        _assign_clusters(X, centroids, assignments)
-
-        # Update centroids.
-        for k in range(rank):
-            centroids[k] = np.nanmean(X[assignments == k], axis=0)
+        _update_lloyds(
+            X, centroids, assignments, cluster_sizes, row_idx, col_idx)
 
         # Check convergence.
-        if np.all(last_assignments == assignments):
+        sgn_cvg = np.all(last_assignments == assignments)
+        cent_cvg = (
+            np.linalg.norm(centroids - last_centroids) /
+            np.linalg.norm(centroids)) < tol
+        if sgn_cvg and cent_cvg:
             break
         else:
             last_assignments[:] = assignments
+            last_centroids[:] = centroids
 
     return assignments, centroids
 
 
-@numba.jit(nopython=True, parallel=True)
-def _assign_clusters(X, centroids, assignments):
-    """
-    Assign each datapoint to closest cluster, ignoring nans.
-
-    Parameters
-    ----------
-    X : ndarray
-        Data matrix. Has shape (m, n). NaN values are considered
-        to be missing data.
-    centroids : ndarray
-        Matrix holding estimates of cluster centroids. Has shape
-        (n_clusters, n).
-    assignments : ndarray
-        Vector holding cluster assignments of each datapoint.
-        Has shape (m,). Values are integers on the interval
-        [0, n_clusters).
-    """
+@numba.jit(nopython=True, cache=True)
+def _update_lloyds(
+        X, centroids, assignments, cluster_sizes, row_idx, col_idx):
+    """Performs one step of Lloyd's algorithm."""
 
     I, J = X.shape
     K = centroids.shape[0]
 
+    # == UPDATE ASSIGNMENTS == #
+    cluster_sizes.fill(0)
     for i in range(I):
 
+        # Find nearest centroid.
         best_dist = np.inf
-
         for k in range(K):
             dist = 0.0
             count = 0
@@ -307,3 +319,17 @@ def _assign_clusters(X, centroids, assignments):
             elif (dist / count) < best_dist:
                 assignments[i] = k
                 best_dist = dist / count
+
+        # Update cluster sizes.
+        cluster_sizes[assignments[i]] += 1
+
+    # == UPDATE CENTROIDS == #
+    centroids.fill(0.0)
+    for i in range(I):
+        centroids[assignments[i]] += X[i]
+    for k in range(K):
+        centroids[k] /= cluster_sizes[k]
+
+    # == UPDATE MISSING ELEMENTS == #
+    for i, j in zip(row_idx, col_idx):
+        X[i, j] = centroids[assignments[i]][j]

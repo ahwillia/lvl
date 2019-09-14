@@ -135,38 +135,55 @@ def poisson_mf_cd(
     m, n = X.shape
     rs = get_random_state(seed)
 
+    # Account for masked entries.
+    if mask is not None:
+        X = np.copy(X)
+        X[~mask] = np.mean(X[mask])
+        Xpred = np.empty((m, n))
+
+    # Initialize parameters.
     U = rs.uniform(-1, 1, size=(m, rank))
     if Vbasis is None:
         Vt = rs.uniform(-1, 1, size=(rank, n))
     else:
         Vt = rs.uniform(-1, 1, size=(rank, Vbasis.shape[0]))
 
-    if mask is None:
-        update_rule = _poiss_cd_update
-        basis_update = _poiss_cd_update_with_basis
-        mask_T = None
-    else:
-        update_rule = _poiss_cd_update_with_mask
-        mask_T = mask.T
+    # Convergence check on parameters.
+    Ulast = np.empty_like(U)
+    Vlast = np.empty_like(Vt)
 
+    # Main optimization loop.
     for itr in range(maxiter):
 
         # Update U.
         if Vbasis is None:
-            update_rule(X, U, Vt, mask)
+            _poiss_cd_update(X, U, Vt, mask)
         else:
-            update_rule(X, U, Vt @ Vbasis, mask)
+            _poiss_cd_update(X, U, Vt @ Vbasis, mask)
 
         # Update V.
         if Vbasis is None:
-            ls = update_rule(X.T, Vt.T, U.T, mask_T)
+            ls = _poiss_cd_update(X.T, Vt.T, U.T, mask_T)
         else:
-            ls = basis_update(X.T, Vt.T, U.T, mask_T, Vbasis)
+            ls = _poiss_cd_update_with_basis(X.T, Vt.T, U.T, mask_T, Vbasis)
+
+        # Update masked elements.
+        if mask is not None:
+            np.dot(U, Vt, out=Xpred)
+            X[~mask] = Xpred[~mask]
+
+        # Store loss.
+        loss_hist.append(ls / X.size)
 
         # Check convergence.
-        loss_hist.append(ls / X.size)
-        if itr > 0 and ((loss_hist[-2] - loss_hist[-1]) < tol):
+        U_upd = np.linalg.norm(Ulast - U) / np.linalg.norm(U)
+        V_upd = np.linalg.norm(Vlast - V) / np.linalg.norm(Vt)
+        if (itr > 0) and (U_upd < tol) and (V_upd < tol):
             break
+
+        # Make copies of previous parameters.
+        np.copyto(Ulast, U)
+        np.copyto(Vlast, Vt)
 
     return U, Vt, np.array(loss_hist)
 
@@ -246,7 +263,3 @@ def _poiss_cd_update_with_basis(Y, U, Vt, mask, Bt):
                 break
 
     return new_loss
-
-
-def _poiss_cd_update_with_mask(*args):
-    raise NotImplementedError
