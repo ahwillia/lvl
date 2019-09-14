@@ -306,19 +306,15 @@ def _update_lloyds(
         best_dist = np.inf
         for k in range(K):
             dist = 0.0
-            count = 0
 
             for j in range(J):
-                if not np.isnan(X[i, j]):
-                    dist += (X[i, j] - centroids[k, j]) ** 2
-                    count += 1
+                dist += (X[i, j] - centroids[k, j]) ** 2
+                if dist > best_dist:
+                    break
 
-            if count == 0:
-                continue
-
-            elif (dist / count) < best_dist:
+            if dist < best_dist:
                 assignments[i] = k
-                best_dist = dist / count
+                best_dist = dist
 
         # Update cluster sizes.
         cluster_sizes[assignments[i]] += 1
