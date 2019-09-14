@@ -22,7 +22,7 @@ class NMF:
 
     def __init__(
             self, n_components, method="hals", init="rand",
-            tol=1e-5, maxiter=100, seed=None):
+            n_restarts=1, tol=1e-5, maxiter=100, seed=None):
 
         # Model hyperparameters.
         self.n_components = n_components
@@ -33,6 +33,7 @@ class NMF:
         self.tol = tol
         self.maxiter = maxiter
         self.seed = seed
+        self.n_restarts = n_restarts
 
         # Model parameters.
         self._factors = None
@@ -64,12 +65,20 @@ class NMF:
             (where mask == 1) and unobserved data points
             (where mask == 0). Has shape (m, n).
         """
-        W, H, self.loss_hist = _fit_nmf(
-            X, self.n_components, mask,
-            self.method, self.init, self.tol,
-            self.maxiter, self.seed
-        )
-        self._factors = W, H
+        min_loss = np.inf
+
+        for itr in range(self.n_restarts):
+
+            W, H, loss_hist = _fit_nmf(
+                X, self.n_components, mask,
+                self.method, self.init, self.tol,
+                self.maxiter, self.seed
+            )
+
+            if loss_hist[-1] < min_loss:
+                min_loss = loss_hist[-1]
+                self._factors = W, H
+                self.loss_hist = loss_hist
 
     def bicv_extend(self, B, C):
         """
