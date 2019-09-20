@@ -75,7 +75,10 @@ class NMF:
                 self.maxiter, self.seed
             )
 
-            if loss_hist[-1] < min_loss:
+            if not np.isfinite(loss_hist[-1]):
+                raise RuntimeError("non-finite loss.")
+
+            if loss_hist[-1] <= min_loss:
                 min_loss = loss_hist[-1]
                 self._factors = W, H
                 self.loss_hist = loss_hist

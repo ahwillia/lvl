@@ -18,7 +18,7 @@ class SoftKMeans:
 
     def __init__(
             self, n_components, method="em", init="rand",
-            seed=None, tol=1e-5, maxiter=100):
+            n_restarts=1, seed=None, tol=1e-5, maxiter=100):
 
         # Model options.
         self.n_components = n_components
@@ -27,6 +27,7 @@ class SoftKMeans:
         self.maxiter = maxiter
         self.seed = seed
         self.tol = tol
+        self.n_restarts = n_restarts
 
         # Model parameters.
         self._factors = None
@@ -58,11 +59,28 @@ class SoftKMeans:
             (where mask == 1) and unobserved data points
             (where mask == 0). Has shape (m, n).
         """
-        self._factors = _fit_soft_kmeans(
-            np.copy(X), self.n_components, mask,
-            self.method, self.init,
-            self.maxiter, self.tol, self.seed
-        )
+        losses = []
+
+        for itr in range(self.n_restarts):
+
+            # Fit model.
+            U, Vt = _fit_soft_kmeans(
+                np.copy(X), self.n_components, mask,
+                self.method, self.init,
+                self.maxiter, self.tol, self.seed
+            )
+
+            # Compute loss.
+            resid = X - np.dot(U, Vt)
+            if mask is None:
+                loss = np.linalg.norm(resid)
+            else:
+                loss = np.linalg.norm(mask * resid)
+
+            # Save best factors.
+            losses.append(loss)
+            if np.argmin(losses) == itr:
+                self._factors = U, Vt
 
     def predict(self):
         return np.dot(*self.factors)
@@ -252,7 +270,12 @@ def soft_kmeans_em(X, rank, mask, init, maxiter, tol, seed):
         centroids = lstsq(resp, X, rcond=None)[0]
 
         # Compute cluster assignments for each datapoint.
-        resp = softmax(-cdist(X, centroids, metric='sqeuclidean'), axis=-1)
+        sim = -cdist(X, centroids, metric='sqeuclidean')
+
+        if np.all(np.isfinite(sim)):
+            resp = softmax(sim, axis=-1)
+        else:
+            raise RuntimeError("infinite distances.")
 
         # Update masked elements.
         if mask is not None:
