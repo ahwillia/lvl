@@ -10,7 +10,7 @@ SEED = 1234
 @pytest.mark.parametrize("m", [10, 20])
 @pytest.mark.parametrize("n", [1, 5])
 @pytest.mark.parametrize("k", [1, 5])
-def test_self_consistency(method, m, n, k):
+def test_against_scipy(method, m, n, k):
 
     rs = np.random.RandomState(SEED)
 

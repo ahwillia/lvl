@@ -1,5 +1,5 @@
 """
-K-means clustering
+Soft K-means clustering.
 """
 import numpy as np
 import numba
@@ -225,7 +225,7 @@ def _init_soft_kmeans(X, rank, mask, init, seed):
 
 def soft_kmeans_em(X, rank, mask, init, maxiter, tol, seed):
     """
-    Fits K-means clustering by standard method (Lloyd's algorithm).
+    Fits K-means clustering by expectation maximization.
 
     Parameters
     ----------
@@ -271,18 +271,14 @@ def soft_kmeans_em(X, rank, mask, init, maxiter, tol, seed):
 
         # Compute cluster assignments for each datapoint.
         sim = -cdist(X, centroids, metric='sqeuclidean')
-
-        if np.all(np.isfinite(sim)):
-            resp = softmax(sim, axis=-1)
-        else:
-            raise RuntimeError("infinite distances.")
+        resp = softmax(sim, axis=-1)
 
         # Update masked elements.
         if mask is not None:
             X[~mask] = (resp @ centroids)[~mask]
 
         # Check convergence.
-        if np.linalg.norm(resp - last_resp) < tol:
+        if (np.linalg.norm(resp - last_resp) / np.sqrt(X.shape[0])) < tol:
             break
         else:
             last_resp[:] = resp
