@@ -219,7 +219,7 @@ def _compute_resp(centroid_tens, X):
         for r in range(rank):
             resp[i, r] = 0.0
             for j in range(n):
-                resp[i, r] += (X[i, j] - centroid_tens[i, r, j]) ** 2
+                resp[i, r] -= (X[i, j] - centroid_tens[i, r, j]) ** 2
     return resp
 
 
