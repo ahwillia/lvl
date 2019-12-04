@@ -1,1 +1,2 @@
-from lvl.basis_funcs.fourier import truncated_fourier
+from lvl.basis_funcs.fourier import TruncatedFourier2D
+from lvl.basis_funcs.rbf import GaussianRBF

@@ -1,72 +1,97 @@
 import numpy as np
-import numbers
 import itertools
 
 
-def truncated_fourier(n_freq, shape):
+class TruncatedFourier:
     """
-    Transforms data using low-frequency Fourier modes.
-
-    Parameters
-    ----------
-    n_freq : int
-        Number of frequencies to keep. The total number
-        of basis functions is 2 * (n + 1) ** len(shape) - 1.
-    shape : tuple
-        Number of samples along each dimension.
-
-    Returns
-    -------
-    Yr : ndarray
-        Matrix of data with shape (m, n_basis_funcs)
-    S : ndarray
-        Matrix with shape (n_basis_funcs, n)
-
-    Reference
-    ---------
-    G.D. Konidaris, S. Osentoski and P.S. Thomas. Value
-    Function Approximation in Reinforcement Learning using
-    the Fourier Basis. In Proceedings of the Twenty-Fifth
-    Conference on Artificial Intelligence, pages 380-385,
-    August 2011.
+    Truncated Fourier basis in 1D.
 
     Example
     -------
-    >>> m, n = shape(data)
-    >>> F = truncated_fourier(10, n)
-    >>> model.fit(data, basis=F)
-    >>> U, Vr = model.factors
-    >>> V = np.dot(Vr, F)
-    >>> model.update(U, V)
+    >>> basis = TruncatedFourier(n_freq=10)
+    >>> model.fit(data, basis)
+    >>> U_in_basis, V_in_basis = model.factors
+    >>> U, V = model.deconvolve_factors(basis)
     """
 
-    if isinstance(shape, numbers.Integral):
-        shape = (shape,)
+    def __init__(self, n_freq):
+        self.n_freq = n_freq
 
-    gs = [np.linspace(0, np.pi, n + 1)[:-1] for n in shape[::-1]]
-    Gs = np.meshgrid(*gs)
-    gxs = np.array([g.ravel() for g in Gs])
+    def transform(self, data):
 
-    # Allocate array for basis functions.
-    S = np.empty((2 * n_freq ** len(shape) - 1, np.prod(shape)))
+        # Data dimensions.
+        if data.ndim == 1:
+            data = data[:, None]
 
-    # First basis function is constant.
-    S[0] = 1.0
+        n_obs, n_features = data.shape
 
-    # Additional basis functions come in sine-cosine pairs.
-    i = 1
-    for c in itertools.product(*[range(n_freq) for n in shape]):
+        if n_features != 1:
+            raise ValueError("Expected 1D data, with shape (n_obs, 1).")
 
-        if np.sum(c) == 0:
-            continue  # constant term is already included.
+        # Scale each dimension to be on the interval [0, 2 * pi)
+        X = data - np.nanmin(data)
+        X *= 2 * np.pi / np.nanmax(X)
 
-        cxs = np.sum(gxs * np.array(c)[:, None], axis=0)
-        S[i] = np.sin(cxs)
-        S[i + 1] = np.cos(cxs)
-        i += 2
+        # Iterate over each dimension.
+        tfmX = [np.ones(X.size)]
 
-    print(i)
-    print(len(S))
+        for c in range(1, self.n_freq):
+            tfmX.append(np.cos(X @ c))
+            tfmX.append(np.sin(X @ c))
 
-    # Normalize rows before returning
-    return S / np.linalg.norm(S, axis=1, keepdims=True)
+        tfmX = np.column_stack(tfmX)
+
+        return tfmX
+
+
+class TruncatedFourier2D:
+    """
+    Truncated 2-dimensional Fourier basis.
+
+    Example
+    -------
+    >>> basis = TruncatedFourier(n_freq=10)
+    >>> model.fit(data, basis)
+    >>> U_in_basis, V_in_basis = model.factors
+    >>> U, V = model.deconvolve_factors(basis)
+    """
+
+    def __init__(self, n_freq):
+        self.n_freq = n_freq
+
+    def transform(self, data):
+
+        # Data dimensions.
+        n_obs, n_features = data.shape
+
+        if n_features != 2:
+            raise ValueError("Expected 2D data, with shape (n_obs, 2).")
+
+        # Scale each dimension to be on the interval [0, 2 * pi)
+        X = data - np.nanmin(data, axis=0, keepdims=True)
+        X *= 2 * np.pi / np.nanmax(X, axis=0, keepdims=True)
+
+        # Iterate over each dimension.
+        s = np.array([1.0, -1.0])
+        tfmX = []
+        prod_iter = itertools.product(
+            range(self.n_freq + 1), range(self.n_freq + 1))
+
+        for _c in prod_iter:
+
+            # No need to iterate over signs for constant term.
+            if np.sum(_c) == 0:
+                tfmX.append(np.ones(n_obs))
+
+            else:
+                c = np.array(_c).ravel()
+                tfmX.append(np.cos(X @ c))
+                tfmX.append(np.sin(X @ c))
+
+                if np.all(c > 0):
+                    tfmX.append(np.cos(X @ (s * c)))
+                    tfmX.append(np.sin(X @ (s * c)))
+
+        tfmX = np.column_stack(tfmX)
+
+        return tfmX

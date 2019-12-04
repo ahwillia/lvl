@@ -3,7 +3,42 @@ Common utility functions.
 """
 import numpy as np
 import numpy.random as npr
-from scipy.special import logsumexp
+import numba
+
+
+def lsqn(A, B, transposed=False, rcond=None):
+    """
+    Returns least-squares solution to an
+    under-determined system or least-norm solution
+    to and over-determined system A @ X = B.
+
+    Parameters
+    ----------
+    A : array
+        Left hand side
+
+    B : array
+        Right hand side
+
+    transposed : bool, optional. Default=False
+        If True, considers (A.T @ X) as the left hand
+        side and (B.T) as the right hand side of the
+        system. Otherwise, (A @ X) and (B) are
+        respectively the left and right hand sides.
+
+    rcond : float
+        Conditioning parameter passed to np.linalg.lstsq
+
+    Returns
+    -------
+    X : array
+        Solution to the least-squares or least-norm
+        problem.
+    """
+    if transposed:
+        return (np.linalg.pinv(A.T) @ B.T).T
+    else:
+        return np.linalg.pinv(A) @ B
 
 
 def get_random_state(seed_or_rs):
@@ -45,5 +80,33 @@ def rand_orth(m, n=None, seed=None):
         return np.linalg.qr(rs.randn(m, n))[0]
 
 
-def softmax(x, axis=None):
-    return np.exp(x - logsumexp(x, axis=axis, keepdims=True))
+@numba.jit(nopython=True)
+def min_and_max(arr):
+    """
+    Returns minimum and maximum of a 1d array, with
+    only a single pass.
+
+    Parameters
+    ----------
+    arr : array-like
+
+
+    Returns
+    -------
+    min : arr.dtype
+        Value of minimum.
+
+    max : arr.dtype
+        Value of maximum.
+    """
+
+    minval = arr[0]
+    maxval = arr[0]
+
+    for x in arr:
+        if x < minval:
+            minval = x
+        elif x > maxval:
+            maxval = x
+
+    return minval, maxval

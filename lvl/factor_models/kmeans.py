@@ -3,10 +3,11 @@ K-means clustering
 """
 import numpy as np
 import numba
+from tqdm import trange
 
 from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
 from lvl.utils import get_random_state
-
+from lvl.factor_models.soft_kmeans import soft_kmeans_em
 
 class KMeans:
     """
@@ -15,10 +16,12 @@ class KMeans:
 
     def __init__(
             self, n_components, method="lloyds", init="rand",
-            n_restarts=10, tol=1e-4, seed=None, maxiter=100):
+            n_restarts=10, tol=1e-4, seed=None, maxiter=100,
+            verbose=False):
 
         # Model options.
         self.n_components = n_components
+        self.verbose = verbose
 
         # Optimization parameters.
         self.maxiter = maxiter
@@ -37,7 +40,7 @@ class KMeans:
             self.method = method
 
         # Check that initialization method is recognized.
-        INITS = ("rand",)
+        INITS = ("rand", "soft")
         if init not in INITS:
             raise_no_init(self, init, INITS)
         else:
@@ -57,8 +60,11 @@ class KMeans:
             (where mask == 0). Has shape (m, n).
         """
 
-        losses = []
-        for itr in range(self.n_restarts):
+        best_loss = np.inf
+        pbar = trange(self.n_restarts) if self.verbose else range(self.n_restarts)
+
+        # Main loop.
+        for _ in pbar:
             assignments, Vt = _fit_kmeans(
                 np.copy(X), self.n_components, mask,
                 self.method, self.init, self.maxiter,
@@ -77,9 +83,9 @@ class KMeans:
                 loss = np.linalg.norm(mask * resid)
 
             # Save best factors.
-            losses.append(loss)
-            if np.argmin(losses) == itr:
+            if loss < best_loss:
                 self._factors = U, Vt
+                best_loss = loss
 
     def predict(self):
         return np.dot(*self.factors)
@@ -214,6 +220,11 @@ def _init_kmeans(X, rank, mask, init, seed):
     if init == "rand":
         idx = rs.choice(X.shape[0], size=rank, replace=False)
         centroids = X[idx]
+
+    # Soft k-means initialization.
+    elif init == "soft":
+        _, centroids = soft_kmeans_em(
+            X, rank, mask, "rand", 100, 1e-5, seed)
 
     else:
         raise NotImplementedError(
