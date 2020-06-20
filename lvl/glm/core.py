@@ -75,7 +75,8 @@ def poiss_glm(
 
 
 def poiss_glm_mixture(
-        n_mixtures, X, Y, glm_method="pass", verbose=True, em_iters=10, **kwargs):
+        n_mixtures, X, Y, glm_method="pass", verbose=True, em_iters=10,
+        max_temp=1.0, **kwargs):
     """
     Fits a mixture of GLMs to population data by expectation
     maximization.
@@ -126,6 +127,10 @@ def poiss_glm_mixture(
 
     pbar = trange(em_iters) if verbose else range(em_iters)
 
+    temp = np.concatenate(
+        (np.logspace(np.log10(max_temp), 0.0, em_iters // 2),
+         np.ones(em_iters - em_iters // 2)))
+
     for itercount in pbar:
 
         # M-step
@@ -145,7 +150,7 @@ def poiss_glm_mixture(
             XW = X @ W[k].T
             ll[k] = np.sum(XW * Y, axis=1) - np.sum(np.exp(XW), axis=1)
 
-        z = softmax(ll, axis=0)
+        z = softmax(ll / temp[itercount], axis=0)
 
         log_like_hist.append(np.sum(z * ll) / n_obs)
 

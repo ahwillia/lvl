@@ -31,8 +31,8 @@ Info = namedtuple(
 
 
 def pass_poiss_reg(
-        X, Y, W=None, obs_weights=None, tol=1e-3,
-        suff_stats=None, store_trace=False, max_iter=10):
+        X, Y, W=None, obs_weights=None, tol=1e-3, suff_stats=None,
+        store_trace=False, max_iter=10, l2_reg=0.0):
 
     # Ensure Y is 2d.
     if Y.ndim == 1:
@@ -47,6 +47,7 @@ def pass_poiss_reg(
         s_X = X.T @ obs_weights
         Xt_Y = X.T @ (Y * obs_weights[:, None])
         Xt_X = X.T @ (X * obs_weights[:, None])
+        Xt_X[np.diag_indices_from(Xt_X)] += l2_reg
         cho_Xt_X = cho_factor(Xt_X)
 
     else:

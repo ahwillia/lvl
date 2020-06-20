@@ -9,6 +9,7 @@ from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
 from lvl.utils import get_random_state
 from lvl.factor_models.soft_kmeans import soft_kmeans_em
 
+
 class KMeans:
     """
     Specifies K-means clustering model.
@@ -16,7 +17,7 @@ class KMeans:
 
     def __init__(
             self, n_components, method="lloyds", init="rand",
-            n_restarts=10, tol=1e-4, seed=None, maxiter=100,
+            n_restarts=1, seed=None, maxiter=100,
             verbose=False):
 
         # Model options.
@@ -27,7 +28,6 @@ class KMeans:
         self.maxiter = maxiter
         self.n_restarts = n_restarts
         self.seed = seed
-        self.tol = tol
 
         # Model parameters.
         self._factors = None
@@ -68,7 +68,7 @@ class KMeans:
             assignments, Vt = _fit_kmeans(
                 np.copy(X), self.n_components, mask,
                 self.method, self.init, self.maxiter,
-                self.tol, self.seed
+                self.seed
             )
 
             # Create one-hot representation of cluster assignments.
@@ -144,7 +144,7 @@ class KMeans:
 
 
 def _fit_kmeans(
-        X, rank, mask, method, init, maxiter, tol, seed):
+        X, rank, mask, method, init, maxiter, seed):
     """
     Dispatches the desired optimization method.
 
@@ -160,8 +160,6 @@ def _fit_kmeans(
         Specifies initialization method.
     maxiter : int
         Maximum number of iterations.
-    tol : float
-        Convergence tolerance.
     seed : int or numpy.random.RandomState
         Seeds random number generator.
 
@@ -178,7 +176,7 @@ def _fit_kmeans(
 
     if method == "lloyds":
         return kmeans_lloyds(
-            X, rank, mask, init, maxiter, tol, seed)
+            X, rank, mask, init, maxiter, seed)
 
     else:
         raise NotImplementedError(
@@ -233,7 +231,7 @@ def _init_kmeans(X, rank, mask, init, seed):
     return centroids
 
 
-def kmeans_lloyds(X, rank, mask, init, maxiter, tol, seed):
+def kmeans_lloyds(X, rank, mask, init, maxiter, seed):
     """
     Fits K-means clustering by standard method (Lloyd's algorithm).
 
@@ -247,8 +245,6 @@ def kmeans_lloyds(X, rank, mask, init, maxiter, tol, seed):
         Mask for missing data. Has shape (m, n).
     maxiter : int
         Number of iterations.
-    tol : float
-        Convergence tolerance.
     seed : int or np.random.RandomState
         Seed for random number generator for initialization.
 
@@ -288,11 +284,7 @@ def kmeans_lloyds(X, rank, mask, init, maxiter, tol, seed):
             X, centroids, assignments, cluster_sizes, row_idx, col_idx)
 
         # Check convergence.
-        sgn_cvg = np.all(last_assignments == assignments)
-        cent_cvg = (
-            np.linalg.norm(centroids - last_centroids) /
-            np.linalg.norm(centroids)) < tol
-        if sgn_cvg and cent_cvg:
+        if np.all(last_assignments == assignments):
             break
         else:
             last_assignments[:] = assignments

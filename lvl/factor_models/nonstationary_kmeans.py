@@ -6,11 +6,12 @@ Note: This is a prototype / experimental feature.
 import numpy as np
 import numba
 from scipy.spatial.distance import cdist
+from scipy.special import softmax
 
 from numpy.linalg import lstsq
 
 from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
-from lvl.utils import get_random_state, softmax
+from lvl.utils import get_random_state
 from lvl.factor_models.soft_kmeans import soft_kmeans_em
 
 from tqdm import trange

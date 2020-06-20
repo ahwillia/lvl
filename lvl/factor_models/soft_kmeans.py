@@ -4,11 +4,12 @@ Soft K-means clustering.
 import numpy as np
 import numba
 from scipy.spatial.distance import cdist
+from scipy.special import softmax
 
 from numpy.linalg import lstsq
 
 from lvl.exceptions import raise_not_fitted, raise_no_method, raise_no_init
-from lvl.utils import get_random_state, softmax
+from lvl.utils import get_random_state
 
 
 class SoftKMeans:

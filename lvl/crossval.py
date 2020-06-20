@@ -4,11 +4,13 @@ Cross-validation routines.
 import numpy as np
 import numpy.random as npr
 from lvl.utils import get_random_state
+from tqdm import trange
 
 
 def speckled_cv_scores(
-        model, X, fit_params=None, strategy="speckled",
-        heldout_frac=0.1, n_repeats=10, seed=None):
+        model, X, fit_params=None, heldout_frac=0.1, n_repeats=10,
+        resampler=None, return_params=False, seed=None,
+        progress_bar=False):
     """
     Estimate train and test error for a model by cross-validation.
     """
@@ -24,20 +26,38 @@ def speckled_cv_scores(
     train_scores = np.empty(n_repeats)
     test_scores = np.empty(n_repeats)
 
+    params = []
+
     # Run cross-validation.
-    for itr in range(n_repeats):
+    pbar = trange(n_repeats) if progress_bar else range(n_repeats)
+    for itr in pbar:
+
+        # If desired, resample X (e.g. apply random shuffle).
+        if resampler is not None:
+            Xsamp = resampler(X)
+        else:
+            Xsamp = X
 
         # Generate a new holdout pattern.
         mask = speckled_mask(X.shape, heldout_frac, rs)
 
         # Fit model.
-        model.fit(X, mask=mask)
+        model.fit(Xsamp, mask=mask)
+
+        # Save parameters.
+        if return_params:
+            params.append(tuple(p.copy() for p in model.factors))
 
         # Compute performance on train and test partitions.
-        train_scores[itr] = model.score(X, mask=mask)
-        test_scores[itr] = model.score(X, mask=~mask)
+        train_scores[itr] = model.score(Xsamp, mask=mask)
+        test_scores[itr] = model.score(Xsamp, mask=~mask)
 
-    return train_scores, test_scores
+    # Return data.
+    return (
+        (train_scores, test_scores, params)
+        if return_params else
+        (train_scores, test_scores)
+    )
 
 
 def speckled_mask(shape, heldout_frac, rs):
@@ -112,6 +132,5 @@ def bicv_scores(
         # Compute performance on train and test partitions.
         train_scores[itr] = model.score(Xs, mask=train_mask)
         test_scores[itr] = model.score(Xs, mask=test_mask)
-
 
     return train_scores, test_scores

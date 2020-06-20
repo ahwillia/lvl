@@ -8,27 +8,65 @@ from lvl.utils import rand_orth, get_random_state
 from lvl.factor_models import NMF
 
 
-def destroy_clusters(X, method="rotation", n_components=None, seed=None):
+class PermuteEachRow:
     """
-    Resample data, destroying clusters along rows, while
-    preserving low-rank structure and norm of the data.
+    Resamples matrix data by randomly permuting
+    each row.
     """
 
-    m, n = X.shape
-    rs = get_random_state(seed)
+    def __init__(self, seed=None):
+        self._rs = get_random_state(seed)
 
-    if method == "rotation":
-        return np.dot(rand_orth(m, m), X)
+    def __call__(self, X):
+        Y = np.copy(X)
+        m, n = Y.shape
+        for i in range(m):
+            Y[i] = Y[i][self._rs.permutation(n)]
+        return Y
 
-    elif method == "nmf":
-        if n_components is None:
-            raise ValueError(
-                "Method 'nmf' requires 'n_components' "
-                "parameter to be specfied."
-            )
 
-        # Find low-rank, nonnegative features.
-        nc = n_components
+class RotationResampler:
+    """
+    Resamples mean-centered data X by Q @ X
+    for random rotation matrix Q.
+    """
+
+    def __init__(self, seed=None):
+        self._rs = get_random_state(seed)
+
+    def __call__(self, X):
+        n = X.shape[0]
+        Q = rand_orth(n, n, seed=self._rs)
+        m = np.mean(X, axis=0, keepdims=True)
+        return (Q @ (X - m)) + m
+
+
+class MaxEntResampler:
+    """
+    Fits multivariate Gaussian to rows of
+    X and samples new data from this. This
+    is the maximum entropy distribution
+    constrained by the first two empirical
+    moments of the data.
+    """
+
+    def __init__(self, seed=None):
+        self._rs = get_random_state(seed)
+
+    def __call__(self, X):
+        m = np.mean(X, axis=0)
+        Xc = X - m[None, :]
+        S = (Xc.T @ Xc) / X.shape[0]
+        return self._rs.multivariate_normal(m, S, size=X.shape[0])
+
+
+class NMFResampler:
+
+    def __init__(self, n_components, seed=None):
+        self.nc = n_components
+        self._rs = get_random_state(seed)
+
+    def __call__(self, X):
         nmf = NMF(nc)
         nmf.fit(X)
         _, H = nmf.factors
